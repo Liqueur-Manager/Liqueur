@@ -1,5 +1,5 @@
 Name: "Liqueur"
-File: "Liqueur.py"
+File: null
 AutoRun: False
 []
 Add_to_path: True
