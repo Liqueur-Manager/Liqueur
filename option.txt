@@ -5,3 +5,4 @@ AutoRun: False
 Add_to_path: True
 Downloadable: False
 []
+Official: True
