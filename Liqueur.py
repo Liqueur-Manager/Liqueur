@@ -22,8 +22,27 @@ PACKAGES_JSON = PACKAGES_DIR / "packages.json"
 AUTORUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
+def print_help():
+    """Выводит справку по использованию"""
+    help_text = """
+Liqueur Package Manager - система управления пакетами
+
+Использование:
+  install <репозиторий> [--name <имя>]  Установка пакета
+  uninstall <имя_пакета>                Удаление пакета
+  list                                   Список установленных пакетов
+  help                                   Показать эту справку
+
+Примеры:
+  Liqueur install MyRepo
+  Liqueur install MyRepo --name MyApp
+  Liqueur uninstall OldApp
+"""
+    print(help_text)
+
+
 def setup_environment():
-    """Настройка рабочей среды с проверкой прав на Mac"""
+    """Настройка рабочей среды"""
     try:
         if platform.system() == "Darwin":
             test_path = Path("/Liqueur_Packages/test_write")
@@ -32,7 +51,7 @@ def setup_environment():
                 test_path.touch()
                 test_path.unlink()
             except PermissionError:
-                print("🔒 Обнаружена защита SIP. Использую ~/Liqueur_Packages")
+                print("🔒 Обнаружена защита SIP. Использую домашнюю директорию...")
                 global PACKAGES_DIR, PACKAGES_JSON
                 PACKAGES_DIR = Path.home() / "Liqueur_Packages"
                 PACKAGES_JSON = PACKAGES_DIR / "packages.json"
@@ -80,6 +99,7 @@ def parse_options(pkg_path: Path) -> dict:
         "dependencies": [],
         "add_to_path": False,
         "downloadable": True,
+        "official": True,
         "commands": []
     }
 
@@ -112,8 +132,11 @@ def parse_options(pkg_path: Path) -> dict:
             options["downloadable"] = "true" in lines[5].lower()
 
         if len(lines) > 6:
+            options["official"] = "true" in lines[6].lower()
+
+        if len(lines) > 7:
             try:
-                options["commands"] = json.loads(lines[6])
+                options["commands"] = json.loads(lines[7])
             except:
                 pass
 
@@ -125,17 +148,75 @@ def install_dependencies(dependencies: List[str], pkg_path: Path):
         return
 
     print("🔧 Установка зависимостей...")
+
+    # Предварительная настройка среды
+    pip_command = [sys.executable, "-m", "pip", "install"]
+    if platform.system() == "Linux":
+        pip_command.append("--user")
+
     for dep in dependencies:
         try:
+            # Пропускаем 'python' так как это системная зависимость
+            if dep.lower() == "python":
+                print("ℹ️ Python уже должен быть установлен в системе")
+                continue
+
+            # Специальная обработка PyQt6
+            if dep.lower() in ["pyqt6", "pyqt6-tools"]:
+                print(f"🔄 Установка {dep}...")
+
+                # Для разных платформ используем разные методы
+                if platform.system() == "Linux":
+                    try:
+                        # Попробуем установить через системный менеджер
+                        subprocess.run(["sudo", "apt-get", "install", "-y", "python3-pyqt6"],
+                                       check=True)
+                    except:
+                        # Если не получилось, пробуем через pip с правами пользователя
+                        subprocess.run([*pip_command, "PyQt6"], check=True)
+                else:
+                    # Для Windows/MacOS используем pip
+                    subprocess.run([*pip_command, "PyQt6"], check=True)
+
+                # Дополнительно устанавливаем tools если нужно
+                if dep.lower() == "pyqt6-tools":
+                    subprocess.run([*pip_command, "pyqt6-tools"], check=True)
+
+                print(f"✅ Успешно установлен: {dep}")
+                continue
+
+            # Установка других зависимостей
             if dep.startswith(f"{ALLOWED_ORG}/"):
                 repo_name = dep.split("/")[1]
                 install_package(repo_name)
             else:
-                subprocess.run([sys.executable, "-m", "pip", "install", dep], check=True)
-                print(f"✅ Установлена зависимость: {dep}")
-        except Exception as e:
-            print(f"⚠️ Не удалось установить {dep}: {str(e)}")
+                print(f"🔄 Установка {dep}...")
+                subprocess.run([*pip_command, dep], check=True)
+                print(f"✅ Успешно установлен: {dep}")
 
+        except subprocess.CalledProcessError as e:
+            print(f"⚠️ Ошибка при установке {dep}. Пробую альтернативный метод...")
+
+            # Альтернативные методы установки
+            try:
+                # 1. Попробуем обновить pip
+                subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"],
+                               check=True)
+
+                # 2. Попробуем установить с дополнительными флагами
+                subprocess.run([*pip_command, "--no-cache-dir", "--force-reinstall", dep],
+                               check=True)
+
+                print(f"✅ Установлено после повторной попытки: {dep}")
+            except Exception as e:
+                print(f"❌ Критическая ошибка при установке {dep}:")
+                print(f"   Причина: {str(e)}")
+                print("   Попробуйте установить вручную:")
+                print(f"   pip install {dep}")
+
+                # Запись в лог ошибки
+                with open(pkg_path / "install_errors.log", "a") as log_file:
+                    log_file.write(f"Failed to install {dep}: {str(e)}\n")
 
 def download_repo(repo_name: str, target_dir: Path) -> bool:
     try:
@@ -258,6 +339,19 @@ def install_package(repo_input: str, name: Optional[str] = None):
             return
 
         options = parse_options(temp_dir)
+
+        if not options["official"]:
+            print("⚠️ ВНИМАНИЕ: Это НЕ официальный репозиторий!")
+            confirm = input("Продолжить установку? (y/n): ")
+            if confirm.lower() != 'y':
+                shutil.rmtree(temp_dir)
+                return
+
+        if not options["downloadable"]:
+            print(f"❌ Пакет '{repo_name}' запрещён к скачиванию")
+            shutil.rmtree(temp_dir)
+            return
+
         pkg_name = name or options["install_name"] or repo_name
         target_dir = PACKAGES_DIR / pkg_name
 
@@ -336,16 +430,6 @@ def list_packages():
             print(f"    ⏱️ {info.get('installed_at', 'дата неизвестна')}")
 
 
-def print_help():
-    print("\nLiqueur Package Manager")
-    print("Использование:")
-    print(f"  install <имя_репозитория> [--name <имя_пакета>]")
-    print("  uninstall <имя_пакета>")
-    print("  list")
-    print("\nПример:")
-    print(f"  {sys.argv[0]} install MyRepo --name MyApp")
-
-
 if __name__ == "__main__":
     setup_environment()
 
@@ -363,6 +447,8 @@ if __name__ == "__main__":
         uninstall_package(sys.argv[2])
     elif cmd == "list":
         list_packages()
+    elif cmd in ("help", "--help", "-h"):
+        print_help()
     else:
         print("❌ Неизвестная команда")
         print_help()
