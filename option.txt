@@ -1,7 +1,7 @@
-Name: "Liqueur"  # Это имя папки для установки
-Liqueur.py        # Главный файл приложения
-AutoRun: False File: Liqueur  # Автозапуск при старте системы
-[]  # Необходимые зависимости
-Add_to_path: True      # Добавить в системный PATH
-Downloadable: False     # Доступно для скачивания через менеджер
-["python main.py"]     # Команда для запуска
+Name: "Liqueur"
+File: "Liqueur.py"
+AutoRun: False
+[]
+Add_to_path: True
+Downloadable: False
+[]
