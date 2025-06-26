@@ -62,7 +62,7 @@ def setup_environment():
                 json.dump({}, f)
     except Exception as e:
         print(f"❌ Ошибка инициализации: {e}")
-        sys.exit(1)
+        sys.exit(1) #
 
 
 def add_to_autostart(app_name: str, file_path: Path):
